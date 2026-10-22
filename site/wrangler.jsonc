@@ -1,0 +1,14 @@
+{
+  // Static marketing, privacy and support pages for the Cue iOS app.
+  // Deployed with Wrangler because `cf` cannot yet express an assets-only Worker.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cue-site",
+  "account_id": "561f024b3ba2bbafa2a67ec9b911693c",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "404-page",
+    "html_handling": "auto-trailing-slash"
+  },
+  "routes": [{ "pattern": "cue.solberg.is", "custom_domain": true }]
+}

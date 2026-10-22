@@ -1,0 +1,15 @@
+{
+  // Cue's speech proxy: holds the ElevenLabs key so the app never ships it, and forwards
+  // takes in languages the iPhone can't recognize on-device (Icelandic) to Scribe v2.
+  // Wrangler rather than cf: cf can't yet express a plain Worker with rate-limit bindings here.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cue-api",
+  "account_id": "561f024b3ba2bbafa2a67ec9b911693c",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+  "ratelimits": [
+    { "name": "TRANSCRIBE_LIMIT", "namespace_id": "4201", "simple": { "limit": 20, "period": 60 } }
+  ]
+  // Secrets: ELEVENLABS_API_KEY, CUE_API_TOKEN (wrangler secret put; .dev.vars locally)
+}

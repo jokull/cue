@@ -1,0 +1,5 @@
+// Cloud speech (cue-api Worker). Empty values disable the cloud fallback.
+// Real values come from the gitignored Cloud.secrets.xcconfig: run scripts/cloud-config.sh.
+CUE_API_URL =
+CUE_API_TOKEN =
+#include? "Cloud.secrets.xcconfig"

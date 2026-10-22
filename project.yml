@@ -1,0 +1,54 @@
+name: Cue
+options:
+  bundleIdPrefix: is.solberg
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+packages:
+  CueCore:
+    path: Packages/CueCore
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+targets:
+  Cue:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+        excludes:
+          - Info.plist
+    configFiles:
+      Debug: Config/Cloud.xcconfig
+      Release: Config/Cloud.xcconfig
+    dependencies:
+      - package: CueCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: is.solberg.cue
+        DEVELOPMENT_TEAM: RDC8539AWM
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        TARGETED_DEVICE_FAMILY: "1"
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: App/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: Cue
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.photography
+        ASSETCATALOG_COMPILER_APPICON_NAME: Cue
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_NSCameraUsageDescription: Cue records you while you read your script.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: Cue records your voice, and listens so the script follows along as you read.
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: Cue saves exported videos to your photo library.
+schemes:
+  Cue:
+    build:
+      targets:
+        Cue: all
+    run:
+      config: Debug
