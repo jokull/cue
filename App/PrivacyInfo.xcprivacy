@@ -22,6 +22,8 @@
 			<key>NSPrivacyCollectedDataTypePurposes</key>
 			<array>
 				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+				<!-- ElevenLabs may retain audio and use it to improve its models (privacy policy). -->
+				<string>NSPrivacyCollectedDataTypePurposeOther</string>
 			</array>
 		</dict>
 	</array>
