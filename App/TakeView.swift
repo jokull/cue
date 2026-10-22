@@ -4,7 +4,6 @@ import SwiftUI
 
 struct TakeView: View {
   @Bindable var take: Take
-  var live: [WordTiming] = []
 
   @State private var player = AVPlayer()
   @State private var renderSize = CGSize(width: 1080, height: 1920)
@@ -65,7 +64,7 @@ struct TakeView: View {
       #endif
       await load()
       if take.timingQuality == .pending {
-        await CaptionAlignment.run(for: take, live: live)
+        await CaptionAlignment.run(for: take)
       }
     }
     .onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification).receive(on: DispatchQueue.main)) { note in
@@ -212,17 +211,19 @@ struct StyleCard: View {
         Text("YOU")
           .padding(.horizontal, 3)
           .background(Color(accent), in: RoundedRectangle(cornerRadius: 4))
-          .foregroundStyle(accent.prefersDarkInk ? .black : .white)
+          .foregroundStyle(accent.prefersDarkText ? .black : .white)
       }
       .font(.system(size: 15, weight: .black, design: .rounded))
     case .pro:
-      (Text("Hey ").foregroundStyle(.white) + Text("you").foregroundStyle(.white.opacity(0.5)))
+      Text("Hey \(Text("you").foregroundStyle(.white.opacity(0.5)))")
+        .foregroundStyle(.white)
         .font(.system(size: 15, weight: .semibold))
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background(.white.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
     case .serif:
-      (Text("Hey ").foregroundStyle(.white) + Text("you").italic().foregroundStyle(Color(accent).mix(with: .white, by: 0.55)))
+      Text("Hey \(Text("you").italic().foregroundStyle(Color(accent).mix(with: .white, by: 0.55)))")
+        .foregroundStyle(.white)
         .font(.system(size: 17, design: .serif))
     }
   }
@@ -232,10 +233,6 @@ extension Color {
   init(_ color: CaptionColor) {
     self.init(.sRGB, red: color.red, green: color.green, blue: color.blue, opacity: color.alpha)
   }
-}
-
-extension CaptionColor {
-  var prefersDarkInk: Bool { 0.2126 * red + 0.7152 * green + 0.0722 * blue > 0.6 }
 }
 
 /// The take with its captions playing on top, from the same layer tree that export renders.

@@ -1,11 +1,12 @@
-# Testing Cue's speech pipeline
+# Testing Cue
 
-Speech has two paths. **On-device** (iOS 26 `SpeechAnalyzer`) handles every language the iPhone
-supports. **Cloud** (the `cue-api` Worker → ElevenLabs Scribe v2) handles the rest, Icelandic
-first, and only after the user allows it once. The script's language is detected silently
-(`NLLanguageRecognizer`) and picks the path.
+All speech runs on ElevenLabs Scribe through the `cue-api` Worker: **Scribe v2 Realtime** follows
+the reader live (the app connects directly with a single-use token), **Scribe v2 batch** times the
+captions of the stitched take. The script's language is detected on-device and sent as a hint.
+Users allow this once, before their first recording; declining means auto-scroll and estimated
+captions, with nothing leaving the phone.
 
-Test from the bottom up. Each layer is cheap to run on its own.
+Test from the bottom up — each layer is cheap on its own.
 
 ## 1. Logic — macOS, seconds
 
@@ -13,66 +14,80 @@ Test from the bottom up. Each layer is cheap to run on its own.
 cd Packages/CueCore && swift test
 ```
 
-Covers tracking, alignment, paging, rendering, export, and decoding Scribe's response. The
-Icelandic fixtures in `Tests/CueCoreTests/Fixtures/scribe-is-*.json` are a real Scribe v2
-response; the test aligns it to its script and checks every word lands with the voice's timing.
+Tracking, reading pace, alignment, paging, caption rendering and export, script hints, clip editing
+(add, retake, reorder, delete/undo, the 3-minute limit, skipped lines), stitching, and decoding a real
+Icelandic Scribe response.
 
-## 2. The Worker — seconds, costs a fraction of a cent
+## 2. The Worker — seconds, a fraction of a cent
 
 ```sh
 scripts/test-api.sh                      # health, 401 without token, 400 on bad input, real transcription
 scripts/test-api.sh path/to/take.m4a is  # any audio, any language
 ```
 
-Locally: `cd api && npx wrangler dev --port 8788` (secrets in `api/.dev.vars`, gitignored),
-then point `CUE_API_URL` in `.env` at `http://localhost:8788`. Logs: `cd api && npx wrangler tail`.
+Locally: `cd api && npx wrangler dev --port 8788` (secrets in `api/.dev.vars`, gitignored), with
+`CUE_API_URL=http://localhost:8788` in `.env`. Logs: `cd api && npx wrangler tail`.
 
-## 3. Simulator end to end — a minute
+## 3. Live tracking, measured — seconds per run
 
-The Simulator can't recognize speech on-device, but it has network, so the cloud path runs for
-real. Debug builds accept a take from Mac files:
+How late the prompter changes line, from real takes. Record a take's realtime transcript once, then
+replay it through CueCore's actual tracker and pace model as often as you like:
 
 ```sh
-xcrun simctl launch <sim> is.solberg.cue \
-  -cueTakeVideo $PWD/research/eval/takes/demo-is.mp4 \
-  -cueTakeScript $PWD/research/eval/takes/smoke-is.txt
+node research/eval/realtime_record.mjs take.pcm out.json is hints=hints.json vad_silence_threshold_secs=0.5
+research/eval/tracklag/.build/release/tracklag hints script.txt > hints.json
+research/eval/tracklag/.build/release/tracklag script.txt batch.scribe.json out.json take.pcm --trim 1
 ```
 
-- Without consent: the take shows the one-time "Time captions to your Icelandic?" card.
-- Add `-cloudSpeechConsent YES` (a launch-argument UserDefaults override): the status turns to
-  "Anchored to your voice" — the audio went Simulator → Worker → Scribe v2 → aligner.
+(`take.pcm`: `ffmpeg -i take.mp4 -ac 1 -ar 16000 -f s16le take.pcm`; `batch.scribe.json` from
+`research/eval/scribe_eval.py`; run node through `dotenvx run -q -f .env --`.) It prints each line's
+switch time against when the reader actually started it. Target: within ±0.5 s, never late.
 
-## 4. On the iPhone — the real test
+## 4. Simulator, end to end — a minute
 
-Signs to read, no extra UI:
+The Simulator has no camera but has network, so the full live pipeline runs for real. Debug builds:
+
+```sh
+xcrun simctl launch <sim> is.solberg.cue -cloudSpeechConsent YES -cloudSpeechConsentAsked YES \
+  -cueFakeCamera $PWD/branding/generated/presenter-2.png \
+  -cueFakeMic $PWD/take.pcm -cueTakeScript $PWD/script.txt
+```
+
+- `-cueFakeMic` plays 16 kHz mono audio through the microphone feed → Scribe Realtime → tracker →
+  prompter, as one clip. Screenshot every couple of seconds and compare lines to the audio.
+- `-cueFakeClips <mp4>` fills the clip tray instead, for the editor UI.
+- `-cueTakeVideo <mp4> -cueTakeScript <txt>` opens a finished take, for the caption pass.
+- `-cueSeed`, `-cueCompose`, `-cueDemo`: screens for App Store screenshots.
+
+## 5. On the iPhone — the real test
 
 | Where | Means |
 |---|---|
-| Prompter tag **VOICE** | live tracking runs on-device for this language |
-| Prompter tag **1.0×** | no on-device engine (e.g. Icelandic): auto-scroll |
-| Take: consent card | cloud language, first time |
-| Take: **Anchored to your voice** | captions timed from the speech (on-device or cloud) |
-| Take: **Estimated timing** | recognition failed or was declined |
+| Prompter tag **VOICE** | live tracking is on |
+| Prompter tag **1.0×** | no consent, or tracking unreachable: auto-scroll |
+| Red frame round the screen | recording has started (after the ring fills) |
+| Take: **Anchored to your voice** | captions timed from the speech |
+| Take: **Estimated timing** | captions spread evenly (declined, offline or failed) |
 
-Checklist: one English take (proves the on-device `SpeechAnalyzer` path); three to five
-Icelandic takes with different scripts, one with a stumble and one with an ad-lib.
+Checklist: an English and an Icelandic script; hold, slide-to-lock, release; drag the script between
+clips (flick and re-catch); retake a clip; reorder; delete and undo; Done → captions.
 
-## 5. Accuracy — numbers, not impressions
+## 6. Accuracy on your own takes
 
 ```sh
-scripts/pull-takes.sh                                   # phone → research/eval/takes/device/*.mp4 + .txt
+scripts/pull-takes.sh   # phone → research/eval/takes/device/*.mp4 + .txt (gitignored: your voice)
 for take in research/eval/takes/device/*.mp4; do
   dotenvx run -q -f .env -- python3 -I research/eval/scribe_eval.py "$take" "${take%.mp4}.txt"
 done
 ```
 
-Reports word error rate against the script, timed-word coverage and latency per take, and saves
-the raw response beside each take. Extend `scribe_eval.py` with other providers (Gemini,
-Soniox, Monologue's engine) to compare like for like.
+Word error rate is scored against the whole script, so a partial read looks worse than it is;
+compare the transcript to what was actually read.
 
 ## Before release
 
-- The app token in `Config/Cloud.secrets.xcconfig` is fine for development and TestFlight but
+- The app token in `Config/Cloud.secrets.xcconfig` is compiled into the build: fine for development,
   extractable from a shipped binary. Replace it with App Attest verification in the Worker.
-- Privacy: `PrivacyInfo.xcprivacy` now declares Audio Data (app functionality, not linked,
-  not tracking). The App Store privacy answers and the privacy policy must say the same.
+- Upgrade the ElevenLabs plan (the free tier allows 6 concurrent realtime sessions, 2.5 h/month).
+- Privacy: `PrivacyInfo.xcprivacy` declares Audio Data (app functionality, not linked, not
+  tracking); the App Store privacy answers and the policy at cue.solberg.is must match.

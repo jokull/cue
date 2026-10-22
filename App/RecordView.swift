@@ -302,7 +302,7 @@ enum PromptMode: Hashable {
 
 struct RecordView: View {
   @State var model: RecordModel
-  var onFinished: (Take, [WordTiming]) -> Void
+  var onFinished: (Take) -> Void
   var onDemo: () -> Void
 
   @Environment(\.dismiss) private var dismiss
@@ -457,7 +457,7 @@ struct RecordView: View {
     Task {
       if let take = await model.finish(in: context) {
         dismiss()
-        onFinished(take, [])
+        onFinished(take)
       }
     }
   }

@@ -19,7 +19,6 @@ struct RecordingsView: View {
   @State private var editingScript: Script?
   @State private var recording: Script?
   @State private var path: [Take] = []
-  @State private var liveTimings: [UUID: [WordTiming]] = [:]
   @State private var askingConsent = false
 
   private var visibleTakes: [Take] {
@@ -100,7 +99,7 @@ struct RecordingsView: View {
         }
       }
       .navigationDestination(for: Take.self) { take in
-        TakeView(take: take, live: liveTimings[take.id] ?? [])
+        TakeView(take: take)
       }
     }
     .overlay(alignment: .top) {
@@ -145,8 +144,7 @@ struct RecordingsView: View {
       Text("Your voice is sent to ElevenLabs as you record, so the script follows you and your captions are timed to your words. Cue doesn't keep it. Without this, the script scrolls at a steady pace.")
     }
     .fullScreenCover(item: $recording) { script in
-      RecordView(model: RecordModel(script: script)) { take, live in
-        liveTimings[take.id] = live
+      RecordView(model: RecordModel(script: script)) { take in
         path.append(take)
       } onDemo: {
         addDemo()

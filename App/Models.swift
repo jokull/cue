@@ -81,8 +81,6 @@ enum TimingQuality: String {
   case pending
   /// Aligned against a full recognition pass over the recorded audio.
   case voice
-  /// From the teleprompter's live tracking while recording.
-  case live
   /// Spread evenly over the take; no usable recognition.
   case estimated
 
@@ -90,7 +88,6 @@ enum TimingQuality: String {
     switch self {
     case .pending: "Aligning to your voice…"
     case .voice: "Anchored to your voice"
-    case .live: "Timed from live tracking"
     case .estimated: "Estimated timing"
     }
   }

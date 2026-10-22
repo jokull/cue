@@ -378,7 +378,7 @@ struct Track {
 
 extension CaptionColor {
   /// Light accents (yellow, green) need dark text on top of them.
-  var prefersDarkText: Bool {
+  public var prefersDarkText: Bool {
     0.2126 * red + 0.7152 * green + 0.0722 * blue > 0.6
   }
 

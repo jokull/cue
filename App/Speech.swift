@@ -56,7 +56,6 @@ nonisolated enum LanguageDetection {
   @ObservationIgnored private var clockTask: Task<Void, Never>?
   @ObservationIgnored private var committed = ""
   @ObservationIgnored private var startedAt = ContinuousClock.now
-  @ObservationIgnored private var advances: [(cursor: Int, time: TimeInterval)] = []
   @ObservationIgnored private var reconnects = 0
   /// The capture queue hands microphone audio to this.
   @ObservationIgnored nonisolated let feed = MicrophoneFeed()
@@ -119,22 +118,6 @@ nonisolated enum LanguageDetection {
     client = nil
   }
 
-  /// Rough per-word timings from when the cursor moved, for when the caption pass fails.
-  func liveTimings(until duration: TimeInterval) -> [WordTiming] {
-    var timings: [WordTiming] = []
-    var previous = (cursor: 0, time: 0.0)
-    for advance in advances where advance.cursor > previous.cursor {
-      let count = advance.cursor - previous.cursor
-      let slot = max(advance.time - previous.time, 0.1) / Double(count)
-      for (offset, index) in (previous.cursor..<advance.cursor).enumerated() {
-        let start = previous.time + slot * Double(offset)
-        timings.append(WordTiming(text: tracker.words[index].text, start: start, end: start + slot * 0.9, source: .script))
-      }
-      previous = advance
-    }
-    return timings.filter { $0.end <= duration }
-  }
-
   private var now: TimeInterval {
     let elapsed = ContinuousClock.now - startedAt
     return Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
@@ -179,7 +162,6 @@ nonisolated enum LanguageDetection {
     let time = now
     if tracker.update(transcript: transcript, at: time) {
       pace.confirm(word: tracker.cursor, at: time)
-      advances.append((tracker.cursor, time))
     }
   }
 
@@ -389,10 +371,10 @@ nonisolated final class ScribeRealtime: @unchecked Sendable {
   }
 }
 
-/// Fills in a take's caption timings: Scribe v2 on the recorded audio, aligned to the script;
-/// live tracking or an even estimate when that isn't possible (no consent, no network).
+/// Fills in a take's caption timings: Scribe v2 on the recorded audio, aligned to the script,
+/// or an even estimate when that isn't possible (no consent, no network).
 enum CaptionAlignment {
-  static func run(for take: Take, live: [WordTiming] = []) async {
+  static func run(for take: Take) async {
     guard let script = take.script else { return }
     let words = script.words
     #if DEBUG
@@ -407,9 +389,6 @@ enum CaptionAlignment {
     {
       take.timings = Aligner.align(script: words, heard: heard)
       take.timingQuality = .voice
-    } else if live.count > words.count / 2 {
-      take.timings = live
-      take.timingQuality = .live
     } else {
       take.timings = Aligner.estimate(script: words, duration: take.duration)
       take.timingQuality = .estimated
