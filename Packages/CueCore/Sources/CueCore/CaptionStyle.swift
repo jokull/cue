@@ -21,8 +21,18 @@ public enum CaptionStyleID: String, CaseIterable, Codable, Sendable, Identifiabl
   }
 }
 
+/// The old preset positions. Still decoded from takes saved before captions became draggable;
+/// new takes use `CaptionSettings.verticalPosition`.
 public enum CaptionPosition: String, CaseIterable, Codable, Sendable {
   case top, middle, bottom
+
+  var fraction: Double {
+    switch self {
+    case .top: 0.2
+    case .middle: 0.5
+    case .bottom: 0.82
+    }
+  }
 }
 
 public enum CaptionSize: String, CaseIterable, Codable, Sendable {
@@ -83,25 +93,26 @@ public struct CaptionSettings: Hashable, Codable, Sendable {
   public var style: CaptionStyleID = .fun
   public var accent: CaptionColor = CaptionColor.accents[1]
   public var size: CaptionSize = .medium
+  /// Legacy preset, read from older takes only.
   public var position: CaptionPosition?
+  /// Where the caption block's centre sits, 0 (top) … 1 (bottom) of the frame. Dragged on the
+  /// preview; nil means the default.
+  public var verticalPosition: Double?
   /// Off means plain captions with no per-word highlight.
   public var highlightsWords = true
+
+  public static let defaultVerticalPosition = 0.70
 
   public init(style: CaptionStyleID = .fun) {
     self.style = style
   }
 
-  public var resolvedPosition: CaptionPosition { position ?? style.defaultPosition }
+  public var resolvedVerticalPosition: Double {
+    verticalPosition ?? position?.fraction ?? Self.defaultVerticalPosition
+  }
 }
 
 extension CaptionStyleID {
-  public var defaultPosition: CaptionPosition {
-    switch self {
-    case .fun: .middle
-    case .pro, .serif: .bottom
-    }
-  }
-
   public var pagingRules: PagingRules {
     switch self {
     case .fun: PagingRules(maxWords: 3, maxCharacters: 18, maxDuration: 1.6)

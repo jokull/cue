@@ -15,6 +15,14 @@ struct TakeView: View {
     Binding { take.captionSettings } set: { take.captionSettings = $0 }
   }
 
+  /// Live offset of a caption drag, as a fraction of the video's height. Applied as a move of
+  /// the existing caption layer; the layer is rebuilt once, on release.
+  @State private var captionDrag = 0.0
+  @State private var draggingCaptions = false
+
+  /// Where a drag snaps: the frame's centre and the default 70%.
+  private static let snapPoints = [0.5, CaptionSettings.defaultVerticalPosition]
+
   var body: some View {
     ScrollView {
       VStack(spacing: 16) {
@@ -23,10 +31,12 @@ struct TakeView: View {
           renderSize: renderSize,
           duration: take.duration,
           timings: showsCaptions ? take.timings : [],
-          settings: take.captionSettings
+          settings: take.captionSettings,
+          dragOffset: captionDrag
         )
         .aspectRatio(renderSize, contentMode: .fit)
         .frame(maxHeight: 460)
+        .overlay { captionGuide }
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .onTapGesture { player.timeControlStatus == .playing ? player.pause() : player.play() }
 
@@ -75,6 +85,50 @@ struct TakeView: View {
     .onDisappear { player.pause() }
   }
 
+  /// Drag the captions up or down on the video; a guide line and percentage show while dragging,
+  /// snapping to the centre and to 70%. High priority so the page doesn't scroll instead.
+  private var captionGuide: some View {
+    GeometryReader { proxy in
+      let start = take.captionSettings.resolvedVerticalPosition
+      let current = start + captionDrag
+      ZStack(alignment: .topLeading) {
+        Color.clear.contentShape(Rectangle())
+        if draggingCaptions {
+          Rectangle()
+            .fill(.white.opacity(0.85))
+            .frame(height: 1)
+            .offset(y: proxy.size.height * current)
+          Text("\(Int((current * 100).rounded()))%")
+            .font(.caption2.weight(.bold))
+            .monospacedDigit()
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(.black.opacity(0.6), in: Capsule())
+            .foregroundStyle(.white)
+            .offset(x: 8, y: proxy.size.height * current - 20)
+        }
+      }
+      .highPriorityGesture(
+        DragGesture(minimumDistance: 6)
+          .onChanged { value in
+            guard showsCaptions else { return }
+            draggingCaptions = true
+            var proposed = min(max(start + value.translation.height / proxy.size.height, 0.06), 0.94)
+            if let snap = Self.snapPoints.first(where: { abs($0 - proposed) < 0.02 }) { proposed = snap }
+            captionDrag = proposed - start
+          }
+          .onEnded { _ in
+            guard showsCaptions else { return }
+            settings.wrappedValue.verticalPosition = start + captionDrag
+            captionDrag = 0
+            draggingCaptions = false
+          },
+        including: showsCaptions ? .all : .subviews
+      )
+      .sensoryFeedback(.selection, trigger: Self.snapPoints.contains(start + captionDrag) && draggingCaptions)
+    }
+  }
+
   private var status: some View {
     HStack(spacing: 8) {
       if take.timingQuality == .pending {
@@ -121,10 +175,7 @@ struct CaptionControls: View {
       HStack(spacing: 10) {
         ForEach(CaptionStyleID.allCases) { style in
           StyleCard(style: style, accent: settings.accent, isSelected: settings.style == style) {
-            withAnimation(.snappy) {
-              settings.style = style
-              settings.position = nil
-            }
+            withAnimation(.snappy) { settings.style = style }
           }
         }
       }
@@ -154,16 +205,6 @@ struct CaptionControls: View {
           Text("S").tag(CaptionSize.small)
           Text("M").tag(CaptionSize.medium)
           Text("L").tag(CaptionSize.large)
-        }
-        .pickerStyle(.segmented)
-        .frame(width: 160)
-      }
-
-      LabeledContent("Position") {
-        Picker("Position", selection: Binding { settings.resolvedPosition } set: { settings.position = $0 }) {
-          Image(systemName: "rectangle.tophalf.inset.filled").tag(CaptionPosition.top)
-          Image(systemName: "rectangle.center.inset.filled").tag(CaptionPosition.middle)
-          Image(systemName: "rectangle.bottomhalf.inset.filled").tag(CaptionPosition.bottom)
         }
         .pickerStyle(.segmented)
         .frame(width: 160)
@@ -242,6 +283,8 @@ struct CaptionPlayer: UIViewRepresentable {
   let duration: TimeInterval
   let timings: [WordTiming]
   let settings: CaptionSettings
+  /// A caption drag in progress, as a fraction of the video's height.
+  var dragOffset: Double = 0
 
   func makeUIView(context: Context) -> PlayerView {
     let view = PlayerView()
@@ -255,6 +298,7 @@ struct CaptionPlayer: UIViewRepresentable {
     view.update(
       item: player.currentItem,
       captions: CaptionKey(timings: timings, settings: settings, renderSize: renderSize, duration: duration))
+    view.dragOffset = dragOffset
   }
 
   struct CaptionKey: Equatable {
@@ -271,6 +315,10 @@ struct CaptionPlayer: UIViewRepresentable {
     private var synchronized: AVSynchronizedLayer?
     private var captions: CALayer?
     private var key: CaptionKey?
+    /// Moves the built caption layer while dragging, so no rebuild per frame.
+    var dragOffset = 0.0 {
+      didSet { if dragOffset != oldValue { setNeedsLayout() } }
+    }
 
     func update(item: AVPlayerItem?, captions newKey: CaptionKey) {
       guard let item else { return }
@@ -305,7 +353,7 @@ struct CaptionPlayer: UIViewRepresentable {
       CATransaction.setDisableActions(true)
       let videoRect = AVMakeRect(aspectRatio: key.renderSize, insideRect: bounds)
       synchronized?.frame = videoRect
-      captions?.position = .zero
+      captions?.position = CGPoint(x: 0, y: dragOffset * videoRect.height)
       let scale = videoRect.width / max(key.renderSize.width, 1)
       captions?.setAffineTransform(CGAffineTransform(scaleX: scale, y: scale))
       CATransaction.commit()

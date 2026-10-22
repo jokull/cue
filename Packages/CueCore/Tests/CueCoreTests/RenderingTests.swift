@@ -124,3 +124,42 @@ import Testing
     #expect(FileManager.default.fileExists(atPath: request.destination.path()))
   }
 }
+
+@Suite struct CaptionPlacementTests {
+  let timings = Aligner.estimate(script: ScriptText.words(sample), duration: 6)
+  let size = CGSize(width: 1080, height: 1920)
+
+  func blockCenter(_ settings: CaptionSettings) -> CGFloat {
+    let frames = CaptionLayerBuilder.Layout(settings: settings, renderSize: size).frames(for: Array(timings.prefix(3)))
+    let block = frames.reduce(CGRect.null) { $0.union($1) }
+    return block.midY / size.height
+  }
+
+  @Test(arguments: CaptionStyleID.allCases)
+  func `captions sit 70% down by default`(style: CaptionStyleID) {
+    #expect(abs(blockCenter(CaptionSettings(style: style)) - 0.70) < 0.01)
+  }
+
+  @Test func `a dragged position is honoured`() {
+    var settings = CaptionSettings(style: .pro)
+    settings.verticalPosition = 0.35
+    #expect(abs(blockCenter(settings) - 0.35) < 0.01)
+  }
+
+  @Test(arguments: [0.0, 1.0])
+  func `the block never leaves the frame`(fraction: Double) {
+    var settings = CaptionSettings(style: .fun)
+    settings.size = .large
+    settings.verticalPosition = fraction
+    let frames = CaptionLayerBuilder.Layout(settings: settings, renderSize: size).frames(for: timings)
+    let block = frames.reduce(CGRect.null) { $0.union($1) }
+    #expect(block.minY >= size.height * 0.04 - 0.5)
+    #expect(block.maxY <= size.height * 0.96 + 0.5)
+  }
+
+  @Test func `older takes keep their preset position`() throws {
+    let saved = #"{"style":"serif","accent":{"red":1,"green":0.84,"blue":0.04,"alpha":1},"size":"medium","position":"top","highlightsWords":true}"#
+    let settings = try JSONDecoder().decode(CaptionSettings.self, from: Data(saved.utf8))
+    #expect(settings.resolvedVerticalPosition == 0.2)
+  }
+}

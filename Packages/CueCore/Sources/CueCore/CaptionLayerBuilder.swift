@@ -67,12 +67,7 @@ public enum CaptionLayerBuilder {
       // Fun needs room for the pill and the pop on either side of each word.
       spaceWidth = CTFontGetSize(font) * (style == .fun ? 0.48 : 0.28)
       maxLineWidth = renderSize.width * style.maxLineWidth
-      centerY =
-        switch settings.resolvedPosition {
-        case .top: renderSize.height * 0.2
-        case .middle: renderSize.height * 0.5
-        case .bottom: renderSize.height * (style == .fun ? 0.74 : 0.82)
-        }
+      centerY = renderSize.height * settings.resolvedVerticalPosition
     }
 
     func displayText(_ word: WordTiming) -> String {
@@ -105,7 +100,11 @@ public enum CaptionLayerBuilder {
         }
       }
 
-      let blockTop = centerY - lineHeight * CGFloat(lines.count) / 2
+      // Centred where the user put it, but never past the frame's edges (4% margin), whatever
+      // the crop or the number of lines.
+      let blockHeight = lineHeight * CGFloat(lines.count)
+      let margin = renderSize.height * 0.04
+      let blockTop = min(max(centerY - blockHeight / 2, margin), renderSize.height - margin - blockHeight)
       var frames = Array(repeating: CGRect.zero, count: words.count)
       for (row, line) in lines.enumerated() {
         let total = line.map { widths[$0] }.reduce(0, +) + spaceWidth * CGFloat(max(line.count - 1, 0))
