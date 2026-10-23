@@ -2,7 +2,7 @@ import CueCore
 import SwiftUI
 
 /// The script band under the camera: the whole script as one continuous column, seen through a
-/// three-line window that fades out at the top and bottom. The reading line sits in the middle.
+/// four-line window — the line just read, the reading line (the focus), and two lines ahead.
 ///
 /// It moves by line, not by word: voice recognition runs about a second behind the reader, which
 /// a word highlight would show as stutter; a line holds ~2–3 s of speech, so line changes driven
@@ -23,7 +23,7 @@ struct PrompterView<Header: View>: View {
   /// The reading line's row in the window: always the second, so expanding only reveals more
   /// of what comes next.
   private let readingRow = 1
-  private var rows: Int { expanded ? 9 : 3 }
+  private var rows: Int { expanded ? 9 : 4 }
   private var zoom: CGFloat { expanded ? 0.92 : 1 }
 
   private var lines: [Range<Int>] { PrompterLines.lines(words) }
@@ -51,8 +51,8 @@ struct PrompterView<Header: View>: View {
       .frame(maxWidth: .infinity, maxHeight: Self.lineHeight * zoom * CGFloat(rows), alignment: .topLeading)
       .clipped()
       .mask {
-        // Fade a line's worth at each edge, however tall the window is.
-        let edge = 0.85 / Double(rows)
+        // A soft edge of under half a line, so the outer lines keep their own opacity.
+        let edge = 0.4 / Double(rows)
         LinearGradient(
           stops: [
             .init(color: .clear, location: 0), .init(color: .black, location: edge),
@@ -88,11 +88,18 @@ struct PrompterView<Header: View>: View {
     .foregroundStyle(.white)
   }
 
-  /// Full white on the reading line, fading with distance — continuous, so it follows a drag.
-  /// Peeking fades gently, since the point is to read ahead.
+  /// Opacity by position relative to the reading line: the line just read 80%, the reading line
+  /// 100%, then 80% and 50% for the two ahead. Interpolated, so a drag blends smoothly as lines
+  /// pass the focus. Peeking fades gently, since the point is to read ahead.
   private func emphasis(of line: Int, focus: Double) -> Double {
-    let distance = abs(Double(line) - focus)
-    return expanded ? max(0.45, 1 - 0.15 * distance) : max(0.3, 1 - 0.6 * distance)
+    let offset = Double(line) - focus
+    if expanded { return max(0.45, 1 - 0.15 * abs(offset)) }
+    let stops: [(offset: Double, opacity: Double)] = [(-2, 0.3), (-1, 0.8), (0, 1), (1, 0.8), (2, 0.5), (3, 0.3)]
+    guard offset > stops.first!.offset else { return stops.first!.opacity }
+    guard offset < stops.last!.offset else { return stops.last!.opacity }
+    let upper = stops.firstIndex { $0.offset >= offset }!
+    let a = stops[upper - 1], b = stops[upper]
+    return a.opacity + (b.opacity - a.opacity) * (offset - a.offset) / (b.offset - a.offset)
   }
 }
 
