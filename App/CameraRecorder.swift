@@ -64,6 +64,12 @@ nonisolated final class CameraRecorder: NSObject, @unchecked Sendable {
         let angle = AVCaptureDevice.RotationCoordinator(device: camera, previewLayer: nil)
           .videoRotationAngleForHorizonLevelCapture
         if connection.isVideoRotationAngleSupported(angle) { connection.videoRotationAngle = angle }
+        // The preview mirrors the front camera like a mirror; record it the same way, or the take
+        // plays back flipped left-to-right from what the reader saw while filming.
+        if connection.isVideoMirroringSupported {
+          connection.automaticallyAdjustsVideoMirroring = false
+          connection.isVideoMirrored = true
+        }
       }
     }
   }
