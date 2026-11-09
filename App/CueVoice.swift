@@ -67,6 +67,7 @@ struct CueVoicePaywall: View {
   @State private var voice = CueVoice.shared
   @State private var showsLanguages = false
   @State private var purchaseMessage: String?
+  @State private var restoring = false
 
   var body: some View {
     Group {
@@ -79,7 +80,8 @@ struct CueVoicePaywall: View {
         // One plan: its button is the whole picker.
         .subscriptionStoreControlStyle(.buttons)
         .subscriptionStoreButtonLabel(.multiline)
-        .storeButton(.visible, for: .restorePurchases)
+        // Our own Restore (in the marketing header), so it can say when nothing was found.
+        .storeButton(.hidden, for: .restorePurchases)
         .subscriptionStorePolicyDestination(url: URL(string: "https://cue.solberg.is/terms")!, for: .termsOfService)
         .subscriptionStorePolicyDestination(url: URL(string: "https://cue.solberg.is/privacy")!, for: .privacyPolicy)
         .onInAppPurchaseCompletion { _, result in
@@ -131,10 +133,34 @@ struct CueVoicePaywall: View {
         .font(.caption)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
+      Button(restoring ? "Restoring…" : "Restore Purchases") {
+        Task { await restore() }
+      }
+      .font(.footnote)
+      .foregroundStyle(.secondary)
+      .buttonStyle(.plain)
+      .disabled(restoring)
     }
     .padding(.horizontal, 16)
     .padding(.top, 8)
     .sheet(isPresented: $showsLanguages) { VoiceLanguagesList().presentationDetents([.medium, .large]) }
+  }
+
+  private func restore() async {
+    restoring = true
+    defer { restoring = false }
+    do {
+      try await AppStore.sync()
+    } catch StoreKitError.userCancelled {
+      return
+    } catch {
+      purchaseMessage = error.localizedDescription
+      return
+    }
+    await voice.refresh()
+    if !voice.isSubscribed {
+      purchaseMessage = "No active Cue Voice subscription on this Apple Account. An expired subscription can't be restored — subscribe again to turn Cue Voice back on."
+    }
   }
 
   /// Free next to Cue Voice: a nil cell is a feature that tier doesn't have, "✓" one it does.
