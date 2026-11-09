@@ -36,6 +36,12 @@ import SwiftUI
   }
 
   func refresh() async {
+    // Finish everything StoreKit has delivered, expired renewals included. An unfinished
+    // transaction for the product makes StoreKit answer a new purchase with that old transaction
+    // instead of showing the payment sheet, so a lapsed subscriber couldn't buy again.
+    for await result in StoreKit.Transaction.unfinished {
+      if case .verified(let transaction) = result { await transaction.finish() }
+    }
     var current: VerificationResult<StoreKit.Transaction>?
     for await result in StoreKit.Transaction.currentEntitlements {
       guard case .verified(let transaction) = result, Self.productIDs.contains(transaction.productID),
@@ -60,6 +66,7 @@ struct CueVoicePaywall: View {
   @Environment(\.dismiss) private var dismiss
   @State private var voice = CueVoice.shared
   @State private var showsLanguages = false
+  @State private var purchaseMessage: String?
 
   var body: some View {
     Group {
@@ -76,7 +83,22 @@ struct CueVoicePaywall: View {
         .subscriptionStorePolicyDestination(url: URL(string: "https://cue.solberg.is/terms")!, for: .termsOfService)
         .subscriptionStorePolicyDestination(url: URL(string: "https://cue.solberg.is/privacy")!, for: .privacyPolicy)
         .onInAppPurchaseCompletion { _, result in
-          if case .success(.success) = result { await voice.refresh() }
+          switch result {
+          case .success(.success):
+            await voice.refresh()
+            if !voice.isSubscribed { purchaseMessage = "The App Store didn't confirm the subscription. Try again in a moment." }
+          case .success(.pending):
+            purchaseMessage = "Your purchase is waiting for approval. Cue Voice turns on as soon as it goes through."
+          case .success(.userCancelled), .success:
+            break
+          case .failure(let error):
+            purchaseMessage = error.localizedDescription
+          }
+        }
+        .alert("Cue Voice", isPresented: Binding(get: { purchaseMessage != nil }, set: { if !$0 { purchaseMessage = nil } })) {
+          Button("OK", role: .cancel) {}
+        } message: {
+          Text(purchaseMessage ?? "")
         }
       }
     }
