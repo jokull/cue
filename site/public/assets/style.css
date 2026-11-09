@@ -28,6 +28,7 @@ strong { color: var(--text); font-weight: 600; }
 .lead { font-size: 21px; color: var(--text); }
 .pill { background: var(--yellow); color: #000; border-radius: 8px; padding: 0 6px; }
 ul { padding-left: 20px; }
-.soon { display: inline-block; margin-top: 20px; padding: 10px 16px; border: 1px solid var(--rule); border-radius: 999px; color: var(--muted); font-size: 15px; }
+.store { display: inline-block; margin-top: 20px; }
+.store img { display: block; height: 50px; width: auto; }
 footer { max-width: 640px; margin: 0 auto; padding: 24px 20px 56px; border-top: 1px solid var(--rule); font-size: 14px; color: var(--muted); display: flex; gap: 20px; flex-wrap: wrap; }
 footer a { color: var(--muted); }
