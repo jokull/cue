@@ -32,12 +32,30 @@ nonisolated enum CloudTranscription {
 
   static var isAvailable: Bool { config != nil }
 
+  /// The app token, plus the Cue Voice subscription the Worker meters this against.
+  private static func authorize(_ request: inout URLRequest, _ config: Config) async {
+    var token = config.token
+    #if DEBUG
+      // Simulator runs with a StoreKit test purchase, which isn't Apple-signed: the dev token
+      // skips the Worker's subscription check.
+      if let flag = ProcessInfo.processInfo.arguments.firstIndex(of: "-cueDevToken"),
+        flag + 1 < ProcessInfo.processInfo.arguments.count
+      {
+        token = ProcessInfo.processInfo.arguments[flag + 1]
+      }
+    #endif
+    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    if let transaction = await CueVoice.shared.signedTransaction {
+      request.setValue(transaction, forHTTPHeaderField: "X-Cue-Transaction")
+    }
+  }
+
   /// A single-use token for one Scribe v2 Realtime session (valid 15 minutes).
   static func realtimeToken() async throws -> String {
     guard let config else { throw Failure.notConfigured }
     var request = URLRequest(url: config.url.appending(path: "v1/realtime-token"))
     request.httpMethod = "POST"
-    request.setValue("Bearer \(config.token)", forHTTPHeaderField: "Authorization")
+    await authorize(&request, config)
     let (data, response) = try await URLSession.shared.data(for: request)
     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
     guard status == 200,
@@ -57,7 +75,7 @@ nonisolated enum CloudTranscription {
     if let language { query.append(URLQueryItem(name: "language", value: language)) }
     var request = URLRequest(url: config.url.appending(path: "v1/transcribe").appending(queryItems: query))
     request.httpMethod = "POST"
-    request.setValue("Bearer \(config.token)", forHTTPHeaderField: "Authorization")
+    await authorize(&request, config)
     request.setValue("audio/mp4", forHTTPHeaderField: "Content-Type")
     request.timeoutInterval = 180
     let (data, response) = try await URLSession.shared.upload(for: request, fromFile: audio)

@@ -7,6 +7,7 @@ struct CueApp: App {
     WindowGroup {
       RecordingsView()
         .tint(.red)
+        .task { CueVoice.shared.start() }
     }
     .modelContainer(for: [Script.self, Take.self])
   }

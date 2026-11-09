@@ -72,7 +72,9 @@ nonisolated enum LanguageDetection {
   var cursor: Int { tracker.cursor }
 
   func prepare() {
-    if !CloudConsent.granted {
+    if !CueVoice.shared.isSubscribed {
+      readiness = .unavailable("Voice tracking comes with Cue Voice.")
+    } else if !CloudConsent.granted {
       readiness = .unavailable("Voice tracking is off.")
     } else if !CloudTranscription.isAvailable {
       readiness = .unavailable("Voice tracking isn't configured in this build.")
@@ -382,6 +384,8 @@ enum CaptionAlignment {
     #else
       let skipsCloud = false
     #endif
+    // Captions come with Cue Voice; without it the take stays uncaptioned (pending) until then.
+    guard CueVoice.shared.isSubscribed else { return }
     if !skipsCloud, CloudConsent.granted, CloudTranscription.isAvailable,
       let heard = try? await CloudTranscription.recognize(
         take.url, language: script.languageCode, keyterms: ScriptHints.keyterms(words)),

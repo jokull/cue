@@ -16,3 +16,5 @@ node_modules/
 Cue.xcodeproj/
 api/.dev.vars
 api/worker-configuration.d.ts
+# Local simulator/derived build output
+build/

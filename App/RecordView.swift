@@ -10,10 +10,13 @@ enum PromptMode: Hashable {
   case voice
   /// Scrolls at a fixed pace while recording; the multiplier is on a 150 wpm base.
   case auto(Double)
+  /// The thumb scrolls the script, recording or not. Free; the other two come with Cue Voice.
+  case manual
 
   var label: String {
     switch self {
     case .voice: "VOICE"
+    case .manual: "MANUAL"
     case .auto(let speed): "\(speed.formatted(.number.precision(.fractionLength(1))))×"
     }
   }
@@ -28,7 +31,7 @@ enum PromptMode: Hashable {
   }
 
   private(set) var phase = Phase.preparing
-  var mode = PromptMode.voice
+  var mode: PromptMode = CueVoice.shared.isSubscribed ? .voice : .manual
   private(set) var clips = ClipSequence()
   /// The clip a hold will replace (a retake). Selecting one also cues the prompter to it.
   private(set) var selected: Clip.ID?
@@ -65,7 +68,7 @@ enum PromptMode: Hashable {
     #endif
     return switch mode {
     case .voice: speech.position
-    case .auto: autoPosition
+    case .auto, .manual: autoPosition
     }
   }
 
@@ -84,11 +87,25 @@ enum PromptMode: Hashable {
       phase = .unavailable(error.localizedDescription)
       return
     }
+    preparePrompter()
+  }
+
+  /// Voice when it can, else steady auto-scroll for subscribers (offline, or no permission to
+  /// listen), else the thumb. Run again when the subscription or the permission changes.
+  func preparePrompter() {
+    guard phase != .recording else { return }
     speech.prepare()
-    if case .unavailable = speech.readiness, mode == .voice {
+    if speech.readiness == .ready {
+      mode = .voice
+    } else if !CueVoice.shared.isSubscribed {
+      mode = .manual
+    } else if mode == .voice || mode == .manual {
       mode = .auto(1.0)
     }
   }
+
+  /// The script can be scrolled by hand between clips, and during one in manual mode.
+  var canScroll: Bool { phase == .idle || (phase == .recording && mode == .manual) }
 
   // MARK: Recording a clip
 
@@ -163,7 +180,7 @@ enum PromptMode: Hashable {
 
   /// Puts the prompter at the start of `word` — dragged by hand, or cued for a retake.
   func reposition(to word: Int) {
-    guard phase == .idle else { return }
+    guard canScroll else { return }
     speech.reposition(to: word)
     autoPosition = Double(word)
   }
@@ -313,6 +330,22 @@ struct RecordView: View {
   @State private var scrubDrag: CGFloat = 0
   @State private var peeking = false
   @State private var closingPeek: Task<Void, Never>?
+  @State private var voice = CueVoice.shared
+  @State private var upselling = false
+
+  /// Voice and auto-scroll are Cue Voice: picking one without it (or without permission to
+  /// listen) opens the paywall instead.
+  private var mode: Binding<PromptMode> {
+    Binding { model.mode } set: { mode in
+      let needsVoice = mode != .manual && !voice.isSubscribed
+      let needsConsent = mode == .voice && !CloudConsent.granted
+      if needsVoice || needsConsent {
+        upselling = true
+      } else {
+        model.mode = mode
+      }
+    }
+  }
 
   private var scrub: ScriptScrub {
     ScriptScrub(model: model, drag: $scrubDrag, expanded: $peeking, closing: $closingPeek)
@@ -339,7 +372,7 @@ struct RecordView: View {
       Color.clear
         .contentShape(Rectangle())
         .gesture(scrub.gesture)
-        .allowsHitTesting(model.phase == .idle)
+        .allowsHitTesting(model.canScroll)
         .ignoresSafeArea()
 
       if case .unavailable(let message) = model.phase {
@@ -395,6 +428,7 @@ struct RecordView: View {
       #if DEBUG
         if let staged = DebugStaging.cameraImage {
           stagedCamera = staged
+          model.preparePrompter()
           if let pcm = DebugStaging.microphoneAudio {
             await model.playThrough(pcm: pcm)
           } else if let video = DebugStaging.clipVideo {
@@ -409,6 +443,9 @@ struct RecordView: View {
       await model.prepare()
     }
     .onDisappear { model.close() }
+    .sheet(isPresented: $upselling, onDismiss: model.preparePrompter) {
+      CueVoicePaywall()
+    }
     .statusBarHidden()
     // The record button sits over the home-indicator zone, where iOS holds back touches to see
     // if they're a swipe home — the lag between pressing and the ring starting. Defer that
@@ -430,11 +467,14 @@ struct RecordView: View {
       }
       Spacer()
       Menu {
-        Picker("Prompter", selection: $model.mode) {
-          Text("Follow my voice").tag(PromptMode.voice)
+        Picker("Prompter", selection: mode) {
+          Label("Follow my voice", systemImage: voice.isSubscribed ? "waveform" : "lock")
+            .tag(PromptMode.voice)
           ForEach([0.8, 1.0, 1.2, 1.5], id: \.self) { speed in
-            Text("Auto-scroll \(PromptMode.auto(speed).label)").tag(PromptMode.auto(speed))
+            Label("Auto-scroll \(PromptMode.auto(speed).label)", systemImage: voice.isSubscribed ? "arrow.down" : "lock")
+              .tag(PromptMode.auto(speed))
           }
+          Label("Scroll by hand", systemImage: "hand.draw").tag(PromptMode.manual)
         }
       } label: {
         Text(model.mode.label)
@@ -486,7 +526,7 @@ struct RecordView: View {
 /// stops covering the lines it's moving. While the finger is down the script peeks open; on
 /// release it glides (with the flick's momentum) and snaps onto a line while still open, waits a
 /// beat, then closes. Touching again during the glide or the beat re-catches it, so long jumps
-/// are a few flicks in a row. Off while recording.
+/// are a few flicks in a row. Off while recording, except in manual mode, where it's the prompter.
 struct ScriptScrub {
   let model: RecordModel
   @Binding var drag: CGFloat
@@ -499,7 +539,7 @@ struct ScriptScrub {
   var gesture: some Gesture {
     DragGesture(minimumDistance: 4)
       .onChanged { value in
-        guard model.phase == .idle else { return }
+        guard model.canScroll else { return }
         closing?.cancel()
         closing = nil
         if !expanded {
@@ -509,7 +549,7 @@ struct ScriptScrub {
         drag = value.translation.height / 0.92
       }
       .onEnded { value in
-        guard model.phase == .idle else { return }
+        guard model.canScroll else { return }
         // Pulling the text up reveals what comes next, so an upward drag moves ahead.
         let steps = Int((-value.predictedEndTranslation.height / 0.92 / lineHeight).rounded())
         let placed = Int((-value.translation.height / 0.92 / lineHeight).rounded())

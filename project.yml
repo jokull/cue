@@ -19,6 +19,7 @@ targets:
       - path: App
         excludes:
           - Info.plist
+          - Cue.storekit
     configFiles:
       Debug: Config/Cloud.xcconfig
       Release: Config/Cloud.xcconfig
@@ -52,3 +53,5 @@ schemes:
         Cue: all
     run:
       config: Debug
+      # Simulator purchases without App Store Connect; the Worker needs -cueDevToken for these.
+      storeKitConfiguration: App/Cue.storekit

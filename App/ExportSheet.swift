@@ -110,22 +110,24 @@ struct ExportSheet: View {
   var body: some View {
     NavigationStack {
       Form {
-        Section("Captions") {
-          Picker("Captions", selection: $model.captions) {
-            ForEach(ExportModel.Captions.allCases, id: \.self) { Text($0.rawValue) }
+        if !take.timings.isEmpty {
+          Section("Captions") {
+            Picker("Captions", selection: $model.captions) {
+              ForEach(ExportModel.Captions.allCases, id: \.self) { Text($0.rawValue) }
+            }
+            .pickerStyle(.segmented)
+            if model.captions == .burned {
+              Toggle("Also export a clean master", isOn: $model.includesClean)
+              LabeledContent("Style", value: take.captionSettings.style.displayName)
+            }
+            if model.captions == .sidecar {
+              Text("A clean video plus .srt and .vtt files with your word timings.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            }
           }
-          .pickerStyle(.segmented)
-          if model.captions == .burned {
-            Toggle("Also export a clean master", isOn: $model.includesClean)
-            LabeledContent("Style", value: take.captionSettings.style.displayName)
-          }
-          if model.captions == .sidecar {
-            Text("A clean video plus .srt and .vtt files with your word timings.")
-              .font(.footnote)
-              .foregroundStyle(.secondary)
-          }
+          .disabled(model.isExporting)
         }
-        .disabled(model.isExporting)
         Section {
           Picker("Format", selection: $model.aspect) {
             ForEach(CaptionExporter.Aspect.allCases) { Text($0.label).tag($0) }
@@ -150,6 +152,8 @@ struct ExportSheet: View {
         ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
       }
     }
+    // Uncaptioned takes (recorded without Cue Voice) export clean.
+    .onAppear { if take.timings.isEmpty { model.captions = .off } }
   }
 
   @ViewBuilder private var result: some View {

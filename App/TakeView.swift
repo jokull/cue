@@ -10,6 +10,11 @@ struct TakeView: View {
   @State private var showsCaptions = true
   @State private var editing = false
   @State private var exporting = false
+  @State private var voice = CueVoice.shared
+  @State private var upselling = false
+
+  /// No captions yet and none coming: the take was recorded without Cue Voice.
+  private var locked: Bool { take.timingQuality == .pending && !voice.isSubscribed }
 
   private var settings: Binding<CaptionSettings> {
     Binding { take.captionSettings } set: { take.captionSettings = $0 }
@@ -30,7 +35,7 @@ struct TakeView: View {
           player: player,
           renderSize: renderSize,
           duration: take.duration,
-          timings: showsCaptions ? take.timings : [],
+          timings: showsCaptions && !locked ? take.timings : [],
           settings: take.captionSettings,
           dragOffset: captionDrag
         )
@@ -43,6 +48,7 @@ struct TakeView: View {
         status
 
         CaptionControls(settings: settings, showsCaptions: $showsCaptions)
+          .disabled(locked)
       }
       .padding(16)
     }
@@ -52,8 +58,11 @@ struct TakeView: View {
     .toolbar {
       ToolbarItem(placement: .topBarTrailing) {
         Button("Export", systemImage: "square.and.arrow.up") { exporting = true }
-          .disabled(take.timingQuality == .pending)
+          .disabled(take.timingQuality == .pending && !locked)
       }
+    }
+    .sheet(isPresented: $upselling, onDismiss: align) {
+      CueVoicePaywall()
     }
     .sheet(isPresented: $editing) {
       CaptionEditor(take: take)
@@ -73,9 +82,7 @@ struct TakeView: View {
         if arguments.contains("-cueExport") { exporting = true }
       #endif
       await load()
-      if take.timingQuality == .pending {
-        await CaptionAlignment.run(for: take)
-      }
+      await alignIfNeeded()
     }
     .onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification).receive(on: DispatchQueue.main)) { note in
       guard (note.object as? AVPlayerItem) === player.currentItem else { return }
@@ -111,7 +118,7 @@ struct TakeView: View {
       .highPriorityGesture(
         DragGesture(minimumDistance: 6)
           .onChanged { value in
-            guard showsCaptions else { return }
+            guard showsCaptions, !locked else { return }
             draggingCaptions = true
             var proposed = min(max(start + value.translation.height / proxy.size.height, 0.06), 0.94)
             if let snap = Self.snapPoints.first(where: { abs($0 - proposed) < 0.02 }) { proposed = snap }
@@ -129,7 +136,34 @@ struct TakeView: View {
     }
   }
 
-  private var status: some View {
+  private func align() {
+    Task { await alignIfNeeded() }
+  }
+
+  private func alignIfNeeded() async {
+    if take.timingQuality == .pending && voice.isSubscribed {
+      await CaptionAlignment.run(for: take)
+    }
+  }
+
+  @ViewBuilder private var status: some View {
+    if locked {
+      HStack(spacing: 8) {
+        Image(systemName: "captions.bubble").foregroundStyle(.secondary)
+        Text("Captions come with Cue Voice")
+        Spacer()
+        Button("Unlock") { upselling = true }
+          .fontWeight(.semibold)
+      }
+      .font(.footnote.weight(.medium))
+      .padding(12)
+      .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+    } else {
+      timingStatus
+    }
+  }
+
+  private var timingStatus: some View {
     HStack(spacing: 8) {
       if take.timingQuality == .pending {
         ProgressView().controlSize(.small)

@@ -3,8 +3,11 @@
 All speech runs on ElevenLabs Scribe through the `cue-api` Worker: **Scribe v2 Realtime** follows
 the reader live (the app connects directly with a single-use token), **Scribe v2 batch** times the
 captions of the stitched take. The script's language is detected on-device and sent as a hint.
-Users allow this once, before their first recording; declining means auto-scroll and estimated
-captions, with nothing leaving the phone.
+It's all part of the **Cue Voice** subscription (yearly, `is.solberg.cue.voice.yearly`, a free
+week first): the Worker only answers requests carrying a current, Apple-signed transaction, and
+meters each subscription per month. Without it Cue is a manual prompter (thumb scrolls the script,
+even while recording) with no captions. Subscribers allow the audio upload once, right after
+buying; declining means steady auto-scroll and estimated captions, with nothing leaving the phone.
 
 Test from the bottom up — each layer is cheap on its own.
 
@@ -21,7 +24,8 @@ Icelandic Scribe response.
 ## 2. The Worker — seconds, a fraction of a cent
 
 ```sh
-scripts/test-api.sh                      # health, 401 without token, 400 on bad input, real transcription
+cd api && npm test                       # signed-transaction verifier, against a throwaway Apple-shaped chain
+scripts/test-api.sh                      # health, 401/402 gates, 400 on bad input, real transcription
 scripts/test-api.sh path/to/take.m4a is  # any audio, any language
 ```
 
@@ -48,11 +52,16 @@ switch time against when the reader actually started it. Target: within ±0.5 s,
 The Simulator has no camera but has network, so the full live pipeline runs for real. Debug builds:
 
 ```sh
-xcrun simctl launch <sim> is.solberg.cue -cloudSpeechConsent YES -cloudSpeechConsentAsked YES \
+xcrun simctl launch <sim> is.solberg.cue -cueVoice -cueDevToken "$CUE_DEV_TOKEN" \
+  -cloudSpeechConsent YES -cloudSpeechConsentAsked YES \
   -cueFakeCamera $PWD/branding/generated/presenter-2.png \
   -cueFakeMic $PWD/take.pcm -cueTakeScript $PWD/script.txt
 ```
 
+- `-cueVoice` acts subscribed; `-cueDevToken` skips the Worker's subscription check (a StoreKit test
+  purchase isn't Apple-signed). Leave both off to see the free, manual prompter.
+- `-cuePaywall` opens the Cue Voice paywall (prices come live from App Store Connect's sandbox).
+  Running from Xcode uses `App/Cue.storekit`, so test purchases work without a sandbox account.
 - `-cueFakeMic` plays 16 kHz mono audio through the microphone feed → Scribe Realtime → tracker →
   prompter, as one clip. Screenshot every couple of seconds and compare lines to the audio.
 - `-cueFakeClips <mp4>` fills the clip tray instead, for the editor UI.
@@ -64,7 +73,8 @@ xcrun simctl launch <sim> is.solberg.cue -cloudSpeechConsent YES -cloudSpeechCon
 | Where | Means |
 |---|---|
 | Prompter tag **VOICE** | live tracking is on |
-| Prompter tag **1.0×** | no consent, or tracking unreachable: auto-scroll |
+| Prompter tag **1.0×** | subscribed, but no consent or tracking unreachable: auto-scroll |
+| Prompter tag **MANUAL** | no Cue Voice: drag the camera image to scroll, recording or not |
 | Red frame round the screen | recording has started (after the ring fills) |
 | Take: **Anchored to your voice** | captions timed from the speech |
 | Take: **Estimated timing** | captions spread evenly (declined, offline or failed) |
@@ -84,10 +94,14 @@ done
 Word error rate is scored against the whole script, so a partial read looks worse than it is;
 compare the transcript to what was actually read.
 
+On TestFlight, buying Cue Voice is free and renews every few minutes — the real Apple-signed
+path through the Worker. `npx wrangler tail` logs `transaction rejected` if verification fails.
+
 ## Before release
 
-- The app token in `Config/Cloud.secrets.xcconfig` is compiled into the build: fine for development,
-  extractable from a shipped binary. Replace it with App Attest verification in the Worker.
+- The app token in `Config/Cloud.secrets.xcconfig` is extractable from a shipped binary; it no
+  longer spends anything on its own (the Worker needs a signed subscription), and use is capped per
+  subscription: 300 realtime sessions and 3 h of take audio a month (`MONTHLY` in `api/src/index.ts`).
 - Upgrade the ElevenLabs plan (the free tier allows 6 concurrent realtime sessions, 2.5 h/month).
-- Privacy: `PrivacyInfo.xcprivacy` declares Audio Data (app functionality, not linked, not
-  tracking); the App Store privacy answers and the policy at cue.solberg.is must match.
+- Privacy: `PrivacyInfo.xcprivacy` declares Audio Data and Purchase History (app functionality, not
+  linked, not tracking); the App Store privacy answers and the policy at cue.solberg.is must match.

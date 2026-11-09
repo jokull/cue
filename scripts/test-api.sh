@@ -1,5 +1,6 @@
 #!/bin/sh
-# Smoke-tests the deployed cue-api Worker: health, auth, input validation, a real transcription.
+# Smoke-tests the deployed cue-api Worker: health, auth, the subscription gate, input validation,
+# a real transcription (with the dev token, which skips the gate).
 # Usage: scripts/test-api.sh [audio-file] [language]   (defaults: the Icelandic TTS smoke clip)
 set -eu
 cd "$(dirname "$0")/.."
@@ -11,8 +12,10 @@ dotenvx run -q -f .env -- sh -c '
   code() { curl -s -o /dev/null -w "%{http_code}" "$@"; }
   check health 200 "$(code "$CUE_API_URL/health")"
   check "no token" 401 "$(code -X POST --data-binary @"$0" "$CUE_API_URL/v1/transcribe")"
-  check "bad language" 400 "$(code -X POST --data-binary @"$0" -H "authorization: Bearer $CUE_API_TOKEN" "$CUE_API_URL/v1/transcribe?language=XX1")"
-  curl -s -X POST --data-binary @"$0" -H "content-type: audio/mp4" -H "authorization: Bearer $CUE_API_TOKEN" \
+  check "no subscription" 402 "$(code -X POST --data-binary @"$0" -H "authorization: Bearer $CUE_API_TOKEN" "$CUE_API_URL/v1/transcribe")"
+  check "forged subscription" 402 "$(code -X POST -H "x-cue-transaction: a.b.c" -H "authorization: Bearer $CUE_API_TOKEN" "$CUE_API_URL/v1/realtime-token")"
+  check "bad language" 400 "$(code -X POST --data-binary @"$0" -H "authorization: Bearer $CUE_DEV_TOKEN" "$CUE_API_URL/v1/transcribe?language=XX1")"
+  curl -s -X POST --data-binary @"$0" -H "content-type: audio/mp4" -H "authorization: Bearer $CUE_DEV_TOKEN" \
     "$CUE_API_URL/v1/transcribe?language=$1" | python3 -I -c "
 import json, sys
 d = json.load(sys.stdin)

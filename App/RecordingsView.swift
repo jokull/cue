@@ -20,6 +20,9 @@ struct RecordingsView: View {
   @State private var recording: Script?
   @State private var path: [Take] = []
   @State private var askingConsent = false
+  @State private var upselling = false
+  @State private var managingSubscription = false
+  @State private var voice = CueVoice.shared
 
   private var visibleTakes: [Take] {
     takes.filter { take in
@@ -39,6 +42,7 @@ struct RecordingsView: View {
         Group {
           VStack(alignment: .leading, spacing: 14) {
             header
+            if !voice.isSubscribed { upgrade }
             chips
             searchField
           }
@@ -82,6 +86,11 @@ struct RecordingsView: View {
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
           Menu("More", systemImage: "line.3.horizontal") {
+            if voice.isSubscribed {
+              Button("Manage Cue Voice", systemImage: "waveform") { managingSubscription = true }
+            } else {
+              Button("Get Cue Voice", systemImage: "waveform") { upselling = true }
+            }
             Button("Add demo take", systemImage: "sparkles") { addDemo() }
             Divider()
             Link(destination: URL(string: "https://cue.solberg.is/support")!) {
@@ -89,6 +98,9 @@ struct RecordingsView: View {
             }
             Link(destination: URL(string: "https://cue.solberg.is/privacy")!) {
               Label("Privacy policy", systemImage: "hand.raised")
+            }
+            Link(destination: URL(string: "https://cue.solberg.is/terms")!) {
+              Label("Terms of use", systemImage: "doc.text")
             }
           }
         }
@@ -108,10 +120,11 @@ struct RecordingsView: View {
       }
     }
     #if DEBUG
-      // Screens to land on for simulator screenshots: -cueDemo, -cueCompose.
+      // Screens to land on for simulator screenshots: -cueDemo, -cueCompose, -cuePaywall.
       .task {
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("-cueDemo") { addDemo() }
+        if arguments.contains("-cuePaywall") { upselling = true }
         if arguments.contains("-cueSeed") { DemoTake.seed(in: context) }
         if !arguments.contains("-cueFakeCamera"), let video = DemoTake.argument("-cueTakeVideo"),
           let script = DemoTake.argument("-cueTakeScript"),
@@ -131,6 +144,8 @@ struct RecordingsView: View {
         }
       }
     #endif
+    .sheet(isPresented: $upselling) { CueVoicePaywall() }
+    .manageSubscriptionsSheet(isPresented: $managingSubscription, subscriptionGroupID: CueVoice.groupID)
     .alert("Let Cue listen as you read?", isPresented: $askingConsent) {
       Button("Not now", role: .cancel) {
         CloudConsent.granted = false
@@ -163,6 +178,31 @@ struct RecordingsView: View {
     }
   }
 
+  /// The way into Cue Voice for free users, always in view. Subscribers manage it from the menu.
+  private var upgrade: some View {
+    Button { upselling = true } label: {
+      HStack(spacing: 12) {
+        Image(systemName: "waveform")
+          .font(.title3.weight(.semibold))
+        VStack(alignment: .leading, spacing: 2) {
+          Text(voice.trialEligible ? "Try AI auto-scroll free for a week" : "Get AI auto-scroll")
+            .font(.subheadline.weight(.semibold))
+          Text("ElevenLabs speech models follow your voice and caption every word.")
+            .font(.caption)
+            .opacity(0.75)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        Image(systemName: "chevron.right")
+          .font(.footnote.weight(.semibold))
+      }
+      .foregroundStyle(.black)
+      .padding(14)
+      .background(Color.yellow, in: RoundedRectangle(cornerRadius: 16))
+    }
+    // Plain, or the List row would fire every button in it on a tap.
+    .buttonStyle(.plain)
+  }
+
   private var chips: some View {
     HStack(spacing: 6) {
       ForEach(Filter.allCases, id: \.self) { option in
@@ -192,7 +232,9 @@ struct RecordingsView: View {
     VStack(spacing: 12) {
       Text("Paste a script, hit record, just talk.")
         .font(.headline)
-      Text("The script follows your voice, and your captions are done when you stop.")
+      Text(voice.isSubscribed
+        ? "The script follows your voice, and your captions are done when you stop."
+        : "Scroll the script with your thumb, or upgrade and let it follow your voice.")
         .font(.subheadline)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
@@ -229,7 +271,8 @@ struct RecordingsView: View {
   private func startRecording() {
     let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !ScriptText.words(text).isEmpty else { return }
-    guard CloudConsent.asked else {
+    // Only subscribers' audio goes anywhere, so only they are asked.
+    guard CloudConsent.asked || !voice.isSubscribed else {
       askingConsent = true
       return
     }
