@@ -9,7 +9,9 @@
   "compatibility_date": "2026-10-01",
   "observability": { "enabled": true },
   "ratelimits": [
-    { "name": "TRANSCRIBE_LIMIT", "namespace_id": "4201", "simple": { "limit": 20, "period": 60 } }
+    { "name": "TRANSCRIBE_LIMIT", "namespace_id": "4201", "simple": { "limit": 20, "period": 60 } },
+    // Per subscription, so rotating IPs doesn't multiply what one subscription can spend.
+    { "name": "SUBSCRIPTION_LIMIT", "namespace_id": "4202", "simple": { "limit": 10, "period": 60 } }
   ],
   // Per-subscription monthly usage, keyed "<originalTransactionId>:<yyyy-mm>".
   "kv_namespaces": [{ "binding": "USAGE", "id": "657cf73debca44cab6ea4415610a9d31" }],
