@@ -9,8 +9,9 @@
  * All routes need `Authorization: Bearer <app token>`, and — when REQUIRE_SUBSCRIPTION is on — a
  * current Cue Voice subscription: `X-Cue-Transaction: <StoreKit signed transaction>`. Use is metered
  * per subscription per month (fair use, so a year of the heaviest use still costs less than the
- * subscription brings in). Only App Store (Production) purchases count; TestFlight and sandbox
- * builds use `Bearer <dev token>`, which skips both, as do eval scripts and the Simulator.
+ * subscription brings in). TestFlight and sandbox purchases are free, so they get tighter caps and
+ * share one monthly pool; only builds signed by our team can make them, so only invited testers
+ * can. `Bearer <dev token>` skips all of it, for eval scripts and the Simulator.
  * Audio is never stored here.
  */
 
@@ -30,7 +31,10 @@ const PRODUCTS = ["is.solberg.cue.voice.yearly"];
 const GRACE_MS = 3 * 24 * 3600 * 1000;
 /** Per subscription per month. Realtime sessions are one per recorded clip; take audio is
  *  transcribed once per finished take. At list prices the cap is ~$2/month of ElevenLabs. */
-const MONTHLY = { sessions: 300, takeSeconds: 3 * 3600, transcribes: 150 };
+const MONTHLY: Usage = { sessions: 300, takeSeconds: 3 * 3600, transcribes: 150 };
+/** Per TestFlight/sandbox subscription per month, and for all of them together. */
+const SANDBOX_MONTHLY: Usage = { sessions: 60, takeSeconds: 1800, transcribes: 40 };
+const SANDBOX_POOL: Usage = { sessions: 600, takeSeconds: 6 * 3600, transcribes: 300 };
 
 interface Usage {
 	sessions: number;
@@ -58,31 +62,42 @@ export default {
 		const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
 		if (!(await env.TRANSCRIBE_LIMIT.limit({ key: ip })).success) return json({ error: "slow down" }, 429);
 
-		// Whose subscription pays for this, if one is required.
-		let meter: string | undefined;
+		// Whose subscription pays for this, if one is required. Each meter is a usage counter and its cap.
+		const meters: { key: string; cap: Usage }[] = [];
 		if (!developer && env.REQUIRE_SUBSCRIPTION === "true") {
 			const subscription = await subscriber(request.headers.get("x-cue-transaction"));
 			if (!subscription) return json({ error: "subscription required" }, 402);
 			// Rotating IPs doesn't help: what an abuser has to pay for is the subscription.
-			if (!(await env.SUBSCRIPTION_LIMIT.limit({ key: subscription })).success) return json({ error: "slow down" }, 429);
-			meter = `${subscription}:${new Date().toISOString().slice(0, 7)}`;
+			if (!(await env.SUBSCRIPTION_LIMIT.limit({ key: subscription.id })).success) return json({ error: "slow down" }, 429);
+			const month = new Date().toISOString().slice(0, 7);
+			if (subscription.sandbox) {
+				meters.push({ key: `sandbox:${subscription.id}:${month}`, cap: SANDBOX_MONTHLY });
+				meters.push({ key: `sandbox-pool:${month}`, cap: SANDBOX_POOL });
+			} else {
+				meters.push({ key: `${subscription.id}:${month}`, cap: MONTHLY });
+			}
 		}
-		const stored = meter ? await env.USAGE.get<Partial<Usage>>(meter, "json") : null;
-		const usage: Usage = { sessions: 0, takeSeconds: 0, transcribes: 0, ...stored };
+		const usages = await Promise.all(
+			meters.map(async ({ key }) => ({ sessions: 0, takeSeconds: 0, transcribes: 0, ...(await env.USAGE.get<Partial<Usage>>(key, "json")) }) as Usage),
+		);
+		const exhausted = (field: keyof Usage) => meters.some(({ cap }, i) => usages[i][field] >= cap[field]);
 		const record = (change: Partial<Usage>) =>
-			meter &&
-			env.USAGE.put(
-				meter,
-				JSON.stringify({
-					sessions: usage.sessions + (change.sessions ?? 0),
-					takeSeconds: usage.takeSeconds + (change.takeSeconds ?? 0),
-					transcribes: usage.transcribes + (change.transcribes ?? 0),
-				}),
-				{ expirationTtl: 40 * 24 * 3600 },
+			Promise.all(
+				meters.map(({ key }, i) =>
+					env.USAGE.put(
+						key,
+						JSON.stringify({
+							sessions: usages[i].sessions + (change.sessions ?? 0),
+							takeSeconds: usages[i].takeSeconds + (change.takeSeconds ?? 0),
+							transcribes: usages[i].transcribes + (change.transcribes ?? 0),
+						}),
+						{ expirationTtl: 40 * 24 * 3600 },
+					),
+				),
 			);
 
 		if (url.pathname === "/v1/realtime-token") {
-			if (usage.sessions >= MONTHLY.sessions) return json({ error: "monthly limit" }, 429);
+			if (exhausted("sessions")) return json({ error: "monthly limit" }, 429);
 			const response = await fetch(`${TOKENS}/realtime_scribe`, {
 				method: "POST",
 				headers: { "xi-api-key": env.ELEVENLABS_API_KEY },
@@ -96,7 +111,7 @@ export default {
 			return json({ token });
 		}
 
-		if (usage.takeSeconds >= MONTHLY.takeSeconds || usage.transcribes >= MONTHLY.transcribes) return json({ error: "monthly limit" }, 429);
+		if (exhausted("takeSeconds") || exhausted("transcribes")) return json({ error: "monthly limit" }, 429);
 		const declared = Number(request.headers.get("content-length") ?? 0);
 		if (!declared || declared > MAX_BYTES) return json({ error: "audio missing or too large" }, 413);
 		const language = url.searchParams.get("language") ?? "";
@@ -141,19 +156,18 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 /** The subscription's original transaction ID, if the signed transaction is a current Cue Voice one. */
-async function subscriber(jws: string | null): Promise<string | undefined> {
+async function subscriber(jws: string | null): Promise<{ id: string; sandbox: boolean } | undefined> {
 	if (!jws) return undefined;
 	try {
 		const transaction = await verifyTransaction(jws);
 		const current =
 			transaction.bundleId === BUNDLE_ID &&
-			// Sandbox (TestFlight, sandbox testers) purchases are free; they don't pay for speech.
-			transaction.environment === "Production" &&
+			(transaction.environment === "Production" || transaction.environment === "Sandbox") &&
 			PRODUCTS.includes(transaction.productId) &&
 			!transaction.revocationDate &&
 			(transaction.expiresDate ?? 0) + GRACE_MS > Date.now();
 		if (!current) console.log("not entitled", { product: transaction.productId, expires: transaction.expiresDate, env: transaction.environment });
-		return current ? transaction.originalTransactionId : undefined;
+		return current ? { id: transaction.originalTransactionId, sandbox: transaction.environment === "Sandbox" } : undefined;
 	} catch (error) {
 		console.error("transaction rejected", String(error));
 		return undefined;
